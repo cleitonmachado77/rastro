@@ -93,8 +93,17 @@ export function buildBreakdown(
   return { components, raw, normalized, explanation };
 }
 
-export function nodeRadiusFromScore(normalized: number): number {
+export function nodeRadiusFromScore(
+  normalized: number,
+  options?: { dominant?: boolean }
+): number {
   const min = 22;
-  const max = 56;
-  return min + (Math.max(0, Math.min(100, normalized)) / 100) * (max - min);
+  const max = 48;
+  const base =
+    min + (Math.max(0, Math.min(100, normalized)) / 100) * (max - min);
+  if (options?.dominant) {
+    // Forma dominante: sempre maior e visualmente central
+    return Math.round(Math.max(base * 1.55, 68));
+  }
+  return base;
 }

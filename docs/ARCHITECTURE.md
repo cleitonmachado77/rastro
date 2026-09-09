@@ -59,8 +59,10 @@ Home → Explorar / Buscar → Caso → Grafo + Timeline
 ## 6. Visualização do grafo
 
 - Nó = ator; tamanho ∝ `normalizedScore`
-- Aresta = relação; espessura ∝ `weight`
-- Forma/cor por `actorKind` / `primaryType` (neutras, não partidárias)
+- **Forma dominante:** o ator de maior relevância fica **sempre no centro**, com tamanho ampliado; as ligações irradiam dele para as demais formas
+- **Formas:** pessoa → círculo; instituição/órgão → hexágono; empresa → triângulo
+- Aresta = relação; **sempre reta** (sem curvas); espessura ∝ `weight`
+- Layout radial com minimização de cruzamentos no anel; arestas paralelas do mesmo par usam retas deslocadas
 - Estilo de aresta por `relationType` e `factStatus`
 - Filtro temporal: relação/evento visível se intersecta o intervalo
 
