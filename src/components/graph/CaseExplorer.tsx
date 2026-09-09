@@ -6,6 +6,7 @@ import {
   Background,
   Controls,
   MiniMap,
+  ConnectionLineType,
   type Node,
   type Edge,
   BackgroundVariant,
@@ -14,12 +15,21 @@ import {
   MarkerType,
 } from "@xyflow/react";
 import { ActorNode, type ActorNodeData } from "./ActorNode";
+import {
+  StraightRelEdge,
+  type StraightRelEdgeData,
+} from "./StraightRelEdge";
 import { CaseTimeline } from "@/components/timeline/CaseTimeline";
 import { CaseFilters, type FilterState } from "@/components/filters/CaseFilters";
 import { ActorPanel } from "@/components/panels/ActorPanel";
 import { RelationPanel } from "@/components/panels/RelationPanel";
 import { ACTOR_TYPE_COLORS, FACT_STATUS_LABELS } from "@/lib/labels";
 import { nodeRadiusFromScore } from "@/lib/relevance";
+import { resolveActorShape, ACTOR_SHAPE_LABELS } from "@/lib/actor-shape";
+import {
+  layoutStraightGraph,
+  parallelEdgeOffsets,
+} from "@/lib/graph-layout";
 
 export type CaseActorDTO = {
   id: string;
@@ -103,30 +113,21 @@ type Props = {
 };
 
 const nodeTypes = { actor: ActorNode };
+const edgeTypes = { straightRel: StraightRelEdge };
 
-function layoutPositions(actors: CaseActorDTO[]) {
-  const sorted = [...actors].sort(
-    (a, b) => b.normalizedScore - a.normalizedScore
-  );
-  const positions: Record<string, { x: number; y: number }> = {};
-  const cx = 480;
-  const cy = 320;
-
-  sorted.forEach((actor, i) => {
-    if (i === 0) {
-      positions[actor.id] = { x: cx, y: cy };
-      return;
-    }
-    const ring = Math.ceil(i / 5);
-    const idxInRing = (i - 1) % 5;
-    const angle = (idxInRing / 5) * Math.PI * 2 - Math.PI / 2 + ring * 0.35;
-    const radius = 160 + ring * 130;
-    positions[actor.id] = {
-      x: cx + Math.cos(angle) * radius,
-      y: cy + Math.sin(angle) * radius,
-    };
-  });
-  return positions;
+/** Escolhe handles opostos à direção da aresta reta (evita feixe no mesmo ponto). */
+function handlesForVector(dx: number, dy: number): {
+  sourceHandle: string;
+  targetHandle: string;
+} {
+  if (Math.abs(dx) > Math.abs(dy)) {
+    return dx >= 0
+      ? { sourceHandle: "r", targetHandle: "l-target" }
+      : { sourceHandle: "l", targetHandle: "r-target" };
+  }
+  return dy >= 0
+    ? { sourceHandle: "b", targetHandle: "t-target" }
+    : { sourceHandle: "t", targetHandle: "b-target" };
 }
 
 function intersectsRange(
@@ -178,8 +179,6 @@ export function CaseExplorer({ caseMeta, actors, events, relationships }: Props)
   const [selectedRelId, setSelectedRelId] = useState<string | null>(null);
   const [playing, setPlaying] = useState(false);
 
-  const positions = useMemo(() => layoutPositions(actors), [actors]);
-
   const visibleActorIds = useMemo(() => {
     const fromEvents = new Set<string>();
     for (const e of events) {
@@ -202,7 +201,7 @@ export function CaseExplorer({ caseMeta, actors, events, relationships }: Props)
     return fromEvents;
   }, [events, relationships, range, filters]);
 
-  const initialNodes: Node<ActorNodeData>[] = useMemo(() => {
+  const filteredActors = useMemo(() => {
     return actors
       .filter((a) => visibleActorIds.has(a.id))
       .filter((a) => {
@@ -217,31 +216,11 @@ export function CaseExplorer({ caseMeta, actors, events, relationships }: Props)
           );
         }
         return true;
-      })
-      .map((a) => {
-        const color = ACTOR_TYPE_COLORS[a.primaryType] ?? ACTOR_TYPE_COLORS.default;
-        const r = Math.round(nodeRadiusFromScore(a.normalizedScore));
-        const pos = positions[a.id] ?? { x: 0, y: 0 };
-        return {
-          id: a.id,
-          type: "actor",
-          position: { x: Math.round(pos.x), y: Math.round(pos.y) },
-          data: {
-            label: a.shortName || a.name,
-            kind: a.actorKind,
-            primaryType: a.primaryType,
-            score: Math.round(a.normalizedScore),
-            color,
-            radius: r,
-            selected: selectedActorId === a.id,
-          },
-          style: { width: r * 2, height: r * 2 },
-        };
       });
-  }, [actors, visibleActorIds, filters, positions, selectedActorId]);
+  }, [actors, visibleActorIds, filters]);
 
-  const initialEdges: Edge[] = useMemo(() => {
-    const visible = new Set(initialNodes.map((n) => n.id));
+  const filteredRels = useMemo(() => {
+    const visible = new Set(filteredActors.map((a) => a.id));
     return relationships
       .filter((r) => visible.has(r.fromActorId) && visible.has(r.toActorId))
       .filter((r) => intersectsRange(r.startDate, r.endDate, range.start, range.end))
@@ -254,45 +233,121 @@ export function CaseExplorer({ caseMeta, actors, events, relationships }: Props)
         )
           return false;
         return true;
-      })
-      .map((r) => ({
-        id: r.id,
+      });
+  }, [relationships, filteredActors, range, filters]);
+
+  const positions = useMemo(() => {
+    return layoutStraightGraph(
+      filteredActors.map((a) => ({
+        id: a.id,
+        size: Math.round(nodeRadiusFromScore(a.normalizedScore)) * 2,
+        shape: resolveActorShape(a.actorKind, a.primaryType),
+      })),
+      filteredRels.map((r) => ({
         source: r.fromActorId,
         target: r.toActorId,
-        label: r.relationType.replace(/_/g, " "),
-        animated: r.factStatus === "INVESTIGATION",
+      }))
+    );
+  }, [filteredActors, filteredRels]);
+
+  const parallelOffsets = useMemo(
+    () =>
+      parallelEdgeOffsets(
+        filteredRels.map((r) => ({
+          id: r.id,
+          source: r.fromActorId,
+          target: r.toActorId,
+        }))
+      ),
+    [filteredRels]
+  );
+
+  const initialNodes: Node<ActorNodeData>[] = useMemo(() => {
+    return filteredActors.map((a) => {
+      const color = ACTOR_TYPE_COLORS[a.primaryType] ?? ACTOR_TYPE_COLORS.default;
+      const r = Math.round(nodeRadiusFromScore(a.normalizedScore));
+      const pos = positions[a.id] ?? { x: 0, y: 0 };
+      const shape = resolveActorShape(a.actorKind, a.primaryType);
+      return {
+        id: a.id,
+        type: "actor",
+        position: { x: Math.round(pos.x), y: Math.round(pos.y) },
+        data: {
+          label: a.shortName || a.name,
+          kind: a.actorKind,
+          primaryType: a.primaryType,
+          shape,
+          score: Math.round(a.normalizedScore),
+          color,
+          radius: r,
+          selected: false,
+        },
+        style: { width: r * 2, height: r * 2 },
+      };
+    });
+  }, [filteredActors, positions]);
+
+  const initialEdges: Edge<StraightRelEdgeData>[] = useMemo(() => {
+    return filteredRels.map((r) => {
+      const from = positions[r.fromActorId] ?? { x: 0, y: 0 };
+      const to = positions[r.toActorId] ?? { x: 0, y: 0 };
+      const handles = handlesForVector(to.x - from.x, to.y - from.y);
+      const offset = parallelOffsets[r.id] ?? { index: 0, count: 1 };
+      return {
+        id: r.id,
+        type: "straightRel",
+        source: r.fromActorId,
+        target: r.toActorId,
+        sourceHandle: handles.sourceHandle,
+        targetHandle: handles.targetHandle,
+        data: {
+          offsetIndex: offset.index,
+          offsetCount: offset.count,
+          label: r.relationType.replace(/_/g, " "),
+        },
+        animated: false,
         style: {
           stroke:
             selectedRelId === r.id
               ? "#c4a574"
               : ACTOR_TYPE_COLORS[r.relationType] ?? "#6b7682",
-          strokeWidth: Math.max(1, Math.min(4, r.weight)),
+          strokeWidth: Math.max(1.25, Math.min(3.5, r.weight)),
           strokeDasharray: dashForStatus(r.factStatus),
-          opacity: selectedRelId && selectedRelId !== r.id ? 0.25 : 0.85,
+          opacity: selectedRelId && selectedRelId !== r.id ? 0.25 : 0.9,
         },
-        labelStyle: {
-          fill: "#9aa5b1",
-          fontSize: 10,
-          fontFamily: "var(--font-mono)",
-        },
-        labelBgStyle: { fill: "#161b20", fillOpacity: 0.85 },
-        labelBgPadding: [4, 2] as [number, number],
         markerEnd: {
           type: MarkerType.ArrowClosed,
-          width: 14,
-          height: 14,
-          color: "#6b7682",
+          width: 12,
+          height: 12,
+          color: selectedRelId === r.id ? "#c4a574" : "#6b7682",
         },
-      }));
-  }, [relationships, initialNodes, range, filters, selectedRelId]);
+      };
+    });
+  }, [filteredRels, positions, parallelOffsets, selectedRelId]);
 
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
 
   useEffect(() => {
-    setNodes(initialNodes);
+    setNodes(
+      initialNodes.map((n) => ({
+        ...n,
+        data: { ...n.data, selected: n.id === selectedActorId },
+      }))
+    );
     setEdges(initialEdges);
+    // selectedActorId aplicado abaixo para não resetar o layout a cada clique
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialNodes, initialEdges, setNodes, setEdges]);
+
+  useEffect(() => {
+    setNodes((prev) =>
+      prev.map((n) => ({
+        ...n,
+        data: { ...n.data, selected: n.id === selectedActorId },
+      }))
+    );
+  }, [selectedActorId, setNodes]);
 
   useEffect(() => {
     if (!playing) return;
@@ -365,7 +420,7 @@ export function CaseExplorer({ caseMeta, actors, events, relationships }: Props)
             onChange={setFilters}
             factStatusLabels={FACT_STATUS_LABELS}
           />
-          <div className="flex-1 min-h-0">
+          <div className="flex-1 min-h-0 relative">
             {mounted ? (
               <ReactFlow
                 nodes={nodes}
@@ -376,8 +431,11 @@ export function CaseExplorer({ caseMeta, actors, events, relationships }: Props)
                 onEdgeClick={onEdgeClick}
                 onPaneClick={onPaneClick}
                 nodeTypes={nodeTypes}
+                edgeTypes={edgeTypes}
+                defaultEdgeOptions={{ type: "straightRel" }}
+                connectionLineType={ConnectionLineType.Straight}
                 fitView
-                fitViewOptions={{ padding: 0.2 }}
+                fitViewOptions={{ padding: 0.25 }}
                 minZoom={0.3}
                 maxZoom={2}
                 colorMode="dark"
@@ -401,6 +459,30 @@ export function CaseExplorer({ caseMeta, actors, events, relationships }: Props)
                 Carregando mapa…
               </div>
             )}
+            <div className="pointer-events-none absolute left-3 top-3 z-10 border border-[var(--line)] bg-[color-mix(in_srgb,var(--bg-elevated)_92%,transparent)] px-3 py-2 backdrop-blur-sm">
+              <p className="mono text-[9px] tracking-widest uppercase text-[var(--fg-faint)] mb-1.5">
+                Formas
+              </p>
+              <ul className="space-y-1 text-[11px] text-[var(--fg-muted)]">
+                <li className="flex items-center gap-2">
+                  <span className="inline-block h-2.5 w-2.5 rounded-full border border-[var(--accent)]" />
+                  {ACTOR_SHAPE_LABELS.circle}
+                </li>
+                <li className="flex items-center gap-2">
+                  <span
+                    className="inline-block h-2.5 w-2.5 border border-[var(--accent-2)]"
+                    style={{ clipPath: "polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%)" }}
+                  />
+                  {ACTOR_SHAPE_LABELS.hexagon}
+                </li>
+                <li className="flex items-center gap-2">
+                  <span
+                    className="inline-block h-0 w-0 border-l-[5px] border-r-[5px] border-b-[9px] border-l-transparent border-r-transparent border-b-[var(--accent)]"
+                  />
+                  {ACTOR_SHAPE_LABELS.triangle}
+                </li>
+              </ul>
+            </div>
           </div>
           <CaseTimeline
             events={events}
