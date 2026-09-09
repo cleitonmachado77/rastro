@@ -236,11 +236,12 @@ export function CaseExplorer({ caseMeta, actors, events, relationships }: Props)
       });
   }, [relationships, filteredActors, range, filters]);
 
-  const positions = useMemo(() => {
+  const layout = useMemo(() => {
     return layoutStraightGraph(
       filteredActors.map((a) => ({
         id: a.id,
         size: Math.round(nodeRadiusFromScore(a.normalizedScore)) * 2,
+        score: a.normalizedScore,
         shape: resolveActorShape(a.actorKind, a.primaryType),
       })),
       filteredRels.map((r) => ({
@@ -249,6 +250,9 @@ export function CaseExplorer({ caseMeta, actors, events, relationships }: Props)
       }))
     );
   }, [filteredActors, filteredRels]);
+
+  const positions = layout.positions;
+  const dominantId = layout.dominantId;
 
   const parallelOffsets = useMemo(
     () =>
@@ -265,13 +269,20 @@ export function CaseExplorer({ caseMeta, actors, events, relationships }: Props)
   const initialNodes: Node<ActorNodeData>[] = useMemo(() => {
     return filteredActors.map((a) => {
       const color = ACTOR_TYPE_COLORS[a.primaryType] ?? ACTOR_TYPE_COLORS.default;
-      const r = Math.round(nodeRadiusFromScore(a.normalizedScore));
+      const isDominant = a.id === dominantId;
+      const r = Math.round(
+        nodeRadiusFromScore(a.normalizedScore, { dominant: isDominant })
+      );
       const pos = positions[a.id] ?? { x: 0, y: 0 };
       const shape = resolveActorShape(a.actorKind, a.primaryType);
       return {
         id: a.id,
         type: "actor",
-        position: { x: Math.round(pos.x), y: Math.round(pos.y) },
+        position: {
+          // Compensa o tamanho maior do hub para o centro geométrico coincidir
+          x: Math.round(pos.x - r),
+          y: Math.round(pos.y - r),
+        },
         data: {
           label: a.shortName || a.name,
           kind: a.actorKind,
@@ -281,11 +292,13 @@ export function CaseExplorer({ caseMeta, actors, events, relationships }: Props)
           color,
           radius: r,
           selected: false,
+          dominant: isDominant,
         },
         style: { width: r * 2, height: r * 2 },
+        zIndex: isDominant ? 10 : 1,
       };
     });
-  }, [filteredActors, positions]);
+  }, [filteredActors, positions, dominantId]);
 
   const initialEdges: Edge<StraightRelEdgeData>[] = useMemo(() => {
     return filteredRels.map((r) => {
@@ -293,6 +306,8 @@ export function CaseExplorer({ caseMeta, actors, events, relationships }: Props)
       const to = positions[r.toActorId] ?? { x: 0, y: 0 };
       const handles = handlesForVector(to.x - from.x, to.y - from.y);
       const offset = parallelOffsets[r.id] ?? { index: 0, count: 1 };
+      const touchesHub =
+        r.fromActorId === dominantId || r.toActorId === dominantId;
       return {
         id: r.id,
         type: "straightRel",
@@ -310,8 +325,13 @@ export function CaseExplorer({ caseMeta, actors, events, relationships }: Props)
           stroke:
             selectedRelId === r.id
               ? "#c4a574"
-              : ACTOR_TYPE_COLORS[r.relationType] ?? "#6b7682",
-          strokeWidth: Math.max(1.25, Math.min(3.5, r.weight)),
+              : touchesHub
+                ? "#8fa3b0"
+                : ACTOR_TYPE_COLORS[r.relationType] ?? "#6b7682",
+          strokeWidth: Math.max(
+            touchesHub ? 1.75 : 1.25,
+            Math.min(3.5, r.weight)
+          ),
           strokeDasharray: dashForStatus(r.factStatus),
           opacity: selectedRelId && selectedRelId !== r.id ? 0.25 : 0.9,
         },
@@ -323,7 +343,7 @@ export function CaseExplorer({ caseMeta, actors, events, relationships }: Props)
         },
       };
     });
-  }, [filteredRels, positions, parallelOffsets, selectedRelId]);
+  }, [filteredRels, positions, parallelOffsets, selectedRelId, dominantId]);
 
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
@@ -482,6 +502,12 @@ export function CaseExplorer({ caseMeta, actors, events, relationships }: Props)
                   {ACTOR_SHAPE_LABELS.triangle}
                 </li>
               </ul>
+              <p className="mono text-[9px] tracking-widest uppercase text-[var(--fg-faint)] mt-2.5 mb-1">
+                Hierarquia
+              </p>
+              <p className="text-[11px] text-[var(--fg-muted)] leading-snug max-w-[140px]">
+                O ator mais relevante fica no centro, maior, com as ligações partindo dele.
+              </p>
             </div>
           </div>
           <CaseTimeline

@@ -13,6 +13,7 @@ export type ActorNodeData = {
   color: string;
   radius: number;
   selected?: boolean;
+  dominant?: boolean;
 };
 
 function ShapeSvg({
@@ -157,6 +158,16 @@ function ActorNodeComponent({ data }: NodeProps<Node<ActorNodeData>>) {
         selected={data.selected}
         size={size}
       />
+      {data.dominant && (
+        <div
+          className="absolute inset-[-6px] pointer-events-none"
+          style={{
+            border: "1px solid rgba(196,165,116,0.35)",
+            borderRadius: data.shape === "circle" ? "50%" : data.shape === "hexagon" ? "8px" : "2px",
+          }}
+          aria-hidden
+        />
+      )}
 
       <div className="relative z-10 px-2 text-center pointer-events-none">
         <div

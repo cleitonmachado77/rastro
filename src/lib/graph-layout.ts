@@ -1,14 +1,21 @@
 /**
- * Layout para arestas estritamente retas, minimizando cruzamentos
- * e evitando que ligações coincidam.
+ * Layout radial: o ator dominante (maior relevância) fica no centro.
+ * Demais atores ao redor; arestas retas; ordem na circunferência
+ * minimiza cruzamentos entre ligações periféricas.
  */
 
 export type LayoutNode = {
   id: string;
   size: number;
+  score?: number;
   shape?: "circle" | "hexagon" | "triangle";
 };
 export type LayoutEdge = { source: string; target: string };
+
+export type LayoutResult = {
+  positions: Record<string, { x: number; y: number }>;
+  dominantId: string | null;
+};
 
 function segmentsCross(
   a1: { x: number; y: number },
@@ -59,22 +66,13 @@ function countCrossings(
   return crossings;
 }
 
-function placeOnCircle(
-  order: string[],
-  cx: number,
-  cy: number,
-  radius: number
-): Record<string, { x: number; y: number }> {
-  const n = Math.max(order.length, 1);
-  const positions: Record<string, { x: number; y: number }> = {};
-  order.forEach((id, i) => {
-    const angle = (i / n) * Math.PI * 2 - Math.PI / 2;
-    positions[id] = {
-      x: Math.round(cx + Math.cos(angle) * radius),
-      y: Math.round(cy + Math.sin(angle) * radius),
-    };
-  });
-  return positions;
+function mulberry32(seed: number) {
+  return function rand() {
+    let t = (seed += 0x6d2b79f5);
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
 }
 
 function shuffle<T>(arr: T[], rand: () => number): T[] {
@@ -86,94 +84,33 @@ function shuffle<T>(arr: T[], rand: () => number): T[] {
   return a;
 }
 
-/** PRNG determinístico (mulberry32) para layout estável entre renders. */
-function mulberry32(seed: number) {
-  return function rand() {
-    let t = (seed += 0x6d2b79f5);
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-function layeredByShape(
-  nodes: LayoutNode[],
+function placeHubAndRing(
+  hubId: string,
+  ringOrder: string[],
   cx: number,
-  cy: number
+  cy: number,
+  radius: number
 ): Record<string, { x: number; y: number }> {
-  const people = nodes.filter((n) => n.shape === "circle");
-  const companies = nodes.filter((n) => n.shape === "triangle");
-  const institutions = nodes.filter((n) => n.shape === "hexagon");
-  const other = nodes.filter(
-    (n) => n.shape !== "circle" && n.shape !== "triangle" && n.shape !== "hexagon"
-  );
-
-  const columns: LayoutNode[][] = [
-    [...people, ...other],
-    companies,
-    institutions,
-  ].map((col) => (col.length ? col : []));
-
-  const positions: Record<string, { x: number; y: number }> = {};
-  const colX = [cx - 280, cx, cx + 280];
-
-  columns.forEach((col, ci) => {
-    if (!col.length) return;
-    const span = Math.max(160, (col.length - 1) * 150);
-    col.forEach((node, i) => {
-      const y =
-        col.length === 1
-          ? cy
-          : cy - span / 2 + (i * span) / (col.length - 1);
-      positions[node.id] = { x: Math.round(colX[ci]), y: Math.round(y) };
-    });
+  const positions: Record<string, { x: number; y: number }> = {
+    [hubId]: { x: Math.round(cx), y: Math.round(cy) },
+  };
+  const n = Math.max(ringOrder.length, 1);
+  ringOrder.forEach((id, i) => {
+    const angle = (i / n) * Math.PI * 2 - Math.PI / 2;
+    positions[id] = {
+      x: Math.round(cx + Math.cos(angle) * radius),
+      y: Math.round(cy + Math.sin(angle) * radius),
+    };
   });
-
   return positions;
 }
 
-function separateNodes(
-  positions: Record<string, { x: number; y: number }>,
-  minDist = 150
-) {
-  const ids = Object.keys(positions);
-  for (let pass = 0; pass < 4; pass++) {
-    for (let i = 0; i < ids.length; i++) {
-      for (let j = i + 1; j < ids.length; j++) {
-        const a = positions[ids[i]];
-        const b = positions[ids[j]];
-        const dx = b.x - a.x;
-        const dy = b.y - a.y;
-        const dist = Math.hypot(dx, dy);
-        if (dist > 0 && dist < minDist) {
-          const push = (minDist - dist) / 2;
-          const ux = dx / dist;
-          const uy = dy / dist;
-          a.x = Math.round(a.x - ux * push);
-          a.y = Math.round(a.y - uy * push);
-          b.x = Math.round(b.x + ux * push);
-          b.y = Math.round(b.y + uy * push);
-        }
-      }
-    }
-  }
-}
-
-/** Ordena nós para reduzir cruzamentos de retas. */
-export function layoutStraightGraph(
+/** Escolhe o ator dominante: maior score; empate por grau. */
+export function pickDominantActor(
   nodes: LayoutNode[],
-  edges: LayoutEdge[],
-  options?: { cx?: number; cy?: number; radius?: number }
-): Record<string, { x: number; y: number }> {
-  const cx = options?.cx ?? 520;
-  const cy = options?.cy ?? 340;
-  const n = nodes.length;
-  if (n === 0) return {};
-  if (n === 1) return { [nodes[0].id]: { x: cx, y: cy } };
-
-  const radius =
-    options?.radius ??
-    Math.max(240, 80 + n * 32 + Math.max(...nodes.map((x) => x.size), 40));
+  edges: LayoutEdge[]
+): string | null {
+  if (!nodes.length) return null;
 
   const degree = new Map<string, number>();
   for (const node of nodes) degree.set(node.id, 0);
@@ -182,72 +119,94 @@ export function layoutStraightGraph(
     if (degree.has(e.target)) degree.set(e.target, (degree.get(e.target) ?? 0) + 1);
   }
 
-  const rand = mulberry32(n * 997 + edges.length * 131);
+  return [...nodes].sort((a, b) => {
+    const scoreDiff = (b.score ?? 0) - (a.score ?? 0);
+    if (scoreDiff !== 0) return scoreDiff;
+    return (degree.get(b.id) ?? 0) - (degree.get(a.id) ?? 0);
+  })[0].id;
+}
 
-  const candidates: Array<Record<string, { x: number; y: number }>> = [];
+/**
+ * Hub no centro; demais em anel. Arestas do hub são radiais (não se cruzam).
+ * Ordem do anel minimiza cruzamentos das demais retas.
+ */
+export function layoutStraightGraph(
+  nodes: LayoutNode[],
+  edges: LayoutEdge[],
+  options?: { cx?: number; cy?: number; radius?: number }
+): LayoutResult {
+  const cx = options?.cx ?? 520;
+  const cy = options?.cy ?? 340;
+  const n = nodes.length;
 
-  // 1) layout por colunas (pessoa | empresa | instituição)
-  candidates.push(layeredByShape(nodes, cx, cy));
+  if (n === 0) return { positions: {}, dominantId: null };
 
-  // 2) círculo por grau
-  const byDegree = [...nodes]
-    .sort((a, b) => (degree.get(b.id) ?? 0) - (degree.get(a.id) ?? 0))
-    .map((x) => x.id);
-  candidates.push(placeOnCircle(byDegree, cx, cy, radius));
-
-  // 3) círculo por forma
-  const byShape = [
-    ...nodes.filter((n) => n.shape === "circle"),
-    ...nodes.filter((n) => n.shape === "triangle"),
-    ...nodes.filter((n) => n.shape === "hexagon"),
-    ...nodes.filter(
-      (n) =>
-        n.shape !== "circle" && n.shape !== "triangle" && n.shape !== "hexagon"
-    ),
-  ].map((x) => x.id);
-  candidates.push(placeOnCircle(byShape, cx, cy, radius));
-
-  // 4) amostragem ampla de permutações no círculo
-  const samples = Math.min(2500, Math.max(400, n * n * 40));
-  let order = [...byDegree];
-  for (let s = 0; s < samples; s++) {
-    order = shuffle(order, rand);
-    candidates.push(placeOnCircle(order, cx, cy, radius));
+  const dominantId = pickDominantActor(nodes, edges)!;
+  if (n === 1) {
+    return {
+      positions: { [dominantId]: { x: Math.round(cx), y: Math.round(cy) } },
+      dominantId,
+    };
   }
 
-  // 5) hill-climbing a partir dos melhores
-  let best = candidates[0];
+  const hubSize = nodes.find((x) => x.id === dominantId)?.size ?? 80;
+  const radius =
+    options?.radius ??
+    Math.max(260, hubSize * 1.6 + 120 + (n - 1) * 26);
+
+  const neighbors = new Set<string>();
+  for (const e of edges) {
+    if (e.source === dominantId) neighbors.add(e.target);
+    if (e.target === dominantId) neighbors.add(e.source);
+  }
+
+  const ringNodes = nodes.filter((x) => x.id !== dominantId);
+  // Vizinhos do hub primeiro (ligações partem do centro), depois os demais por score
+  const ringSeed = [
+    ...ringNodes
+      .filter((x) => neighbors.has(x.id))
+      .sort((a, b) => (b.score ?? 0) - (a.score ?? 0)),
+    ...ringNodes
+      .filter((x) => !neighbors.has(x.id))
+      .sort((a, b) => (b.score ?? 0) - (a.score ?? 0)),
+  ].map((x) => x.id);
+
+  const rand = mulberry32(n * 997 + edges.length * 131 + dominantId.length * 17);
+
+  let bestOrder = [...ringSeed];
+  let best = placeHubAndRing(dominantId, bestOrder, cx, cy, radius);
   let bestScore = countCrossings(edges, best);
 
-  for (const cand of candidates) {
-    separateNodes(cand);
+  const samples = Math.min(2000, Math.max(300, (n - 1) * (n - 1) * 30));
+  let order = [...bestOrder];
+  for (let s = 0; s < samples && bestScore > 0; s++) {
+    order = shuffle(order, rand);
+    const cand = placeHubAndRing(dominantId, order, cx, cy, radius);
     const score = countCrossings(edges, cand);
     if (score < bestScore) {
       bestScore = score;
+      bestOrder = order;
       best = cand;
-      if (bestScore === 0) break;
     }
   }
 
-  if (bestScore > 0) {
-    const ids = Object.keys(best);
-    for (let round = 0; round < 400 && bestScore > 0; round++) {
-      const i = Math.floor(rand() * ids.length);
-      const j = Math.floor(rand() * ids.length);
-      if (i === j) continue;
-      const next: Record<string, { x: number; y: number }> = { ...best };
-      next[ids[i]] = { ...best[ids[j]] };
-      next[ids[j]] = { ...best[ids[i]] };
-      const score = countCrossings(edges, next);
-      if (score <= bestScore) {
-        bestScore = score;
-        best = next;
-      }
+  // Hill-climbing: só troca nós do anel; hub permanece no centro
+  for (let round = 0; round < 500 && bestScore > 0; round++) {
+    const i = Math.floor(rand() * bestOrder.length);
+    const j = Math.floor(rand() * bestOrder.length);
+    if (i === j) continue;
+    const nextOrder = [...bestOrder];
+    [nextOrder[i], nextOrder[j]] = [nextOrder[j], nextOrder[i]];
+    const cand = placeHubAndRing(dominantId, nextOrder, cx, cy, radius);
+    const score = countCrossings(edges, cand);
+    if (score <= bestScore) {
+      bestScore = score;
+      bestOrder = nextOrder;
+      best = cand;
     }
   }
 
-  separateNodes(best);
-  return best;
+  return { positions: best, dominantId };
 }
 
 /**
