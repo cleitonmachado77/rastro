@@ -24,6 +24,15 @@ Abra [http://localhost:3000](http://localhost:3000).
 
 Caso de teste: **Caso Banco Aurora** em `/casos/banco-aurora`.
 
+## Deploy na Vercel
+
+1. Framework Preset: **Next.js** (não “Other”).
+2. Em Project Settings → Build & Development, deixe **Output Directory vazio** (não use `public`).
+3. Defina a variável de ambiente:
+   - `DATABASE_URL` = `file:./dev.db`
+
+O `vercel.json` já força `framework: "nextjs"`. O build aplica migrations e seed do Caso Banco Aurora.
+
 ## Documentação
 
 Ver [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — arquitetura, modelo de dados, relevância, roadmap.
