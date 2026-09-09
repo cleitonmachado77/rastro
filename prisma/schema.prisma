@@ -1,0 +1,340 @@
+// RASTRO — modelo de dados do MVP
+// Núcleo: Atores → Eventos → Relações → Fontes → Casos
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum EditorialStatus {
+  DRAFT
+  IN_REVIEW
+  PUBLISHED
+  ARCHIVED
+  REJECTED
+}
+
+enum EvidenceLevel {
+  JOURNALISTIC // 1
+  INSTITUTIONAL // 2
+  OFFICIAL_DOCUMENT // 3
+  PRIMARY_EVIDENCE // 4
+}
+
+enum FactStatus {
+  DOCUMENTED_FACT
+  REPORTAGE
+  ALLEGATION
+  INVESTIGATION
+  DENUNCIATION
+  PROCESS
+  DECISION
+  CONVICTION
+  ACQUITTAL
+  ARCHIVAL
+  CONTESTATION
+  CORRECTION
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String
+  role      String   @default("editor") // admin | editor | reviewer
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  createdCases  Case[]           @relation("CaseCreatedBy")
+  reviewedCases Case[]           @relation("CaseReviewedBy")
+  auditLogs     AuditLog[]
+  reviews       EditorialReview[]
+}
+
+model Case {
+  id              String          @id @default(cuid())
+  slug            String          @unique
+  name            String
+  description     String
+  startDate       DateTime?
+  endDate         DateTime?
+  currentSituation String?
+  status          EditorialStatus @default(DRAFT)
+  featured        Boolean         @default(false)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  createdById     String?
+  reviewedById    String?
+  reviewedAt      DateTime?
+
+  createdBy User? @relation("CaseCreatedBy", fields: [createdById], references: [id])
+  reviewedBy User? @relation("CaseReviewedBy", fields: [reviewedById], references: [id])
+
+  caseActors    CaseActor[]
+  events        Event[]
+  relationships Relationship[]
+  sources       Source[]
+  documents     Document[]
+  locations     Location[]
+}
+
+model Actor {
+  id          String          @id @default(cuid())
+  slug        String          @unique
+  name        String
+  shortName   String?
+  actorKind   String // person | organization | other
+  primaryType String // empresario | empresa | banco | deputado | orgao | etc.
+  description String?
+  status      EditorialStatus @default(PUBLISHED)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  createdById String?
+  reviewedById String?
+  reviewedAt  DateTime?
+
+  aliases      ActorAlias[]
+  roles        ActorRole[]
+  caseActors   CaseActor[]
+  eventActors  EventActor[]
+  relevance    ActorRelevanceScore[]
+  sourcesMentioned Source[] @relation("SourceMentions")
+  documents    Document[]
+  outgoing     Relationship[] @relation("RelFrom")
+  incoming     Relationship[] @relation("RelTo")
+}
+
+model ActorAlias {
+  id      String @id @default(cuid())
+  actorId String
+  alias   String
+  actor   Actor  @relation(fields: [actorId], references: [id], onDelete: Cascade)
+
+  @@index([alias])
+}
+
+model ActorRole {
+  id        String    @id @default(cuid())
+  actorId   String
+  role      String
+  startDate DateTime?
+  endDate   DateTime?
+  notes     String?
+  actor     Actor     @relation(fields: [actorId], references: [id], onDelete: Cascade)
+}
+
+model CaseActor {
+  id       String @id @default(cuid())
+  caseId   String
+  actorId  String
+  notes    String?
+  case     Case   @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  actor    Actor  @relation(fields: [actorId], references: [id], onDelete: Cascade)
+
+  @@unique([caseId, actorId])
+}
+
+model Event {
+  id              String          @id @default(cuid())
+  caseId          String
+  slug            String
+  title           String
+  description     String
+  eventType       String
+  factStatus      FactStatus
+  evidenceLevel   EvidenceLevel
+  startDate       DateTime
+  endDate         DateTime?
+  locationLabel   String?
+  locationId      String?
+  status          EditorialStatus @default(PUBLISHED)
+  importance      Float           @default(1)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  createdById     String?
+  reviewedById    String?
+  reviewedAt      DateTime?
+
+  case          Case           @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  location      Location?      @relation(fields: [locationId], references: [id])
+  eventActors   EventActor[]
+  eventSources  EventSource[]
+  relationships Relationship[]
+  documents     Document[]
+
+  @@unique([caseId, slug])
+  @@index([startDate])
+}
+
+model EventActor {
+  id       String  @id @default(cuid())
+  eventId  String
+  actorId  String
+  role     String? // participou | alvo | autor | testemunha | etc.
+  event    Event   @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  actor    Actor   @relation(fields: [actorId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, actorId])
+}
+
+model Relationship {
+  id              String          @id @default(cuid())
+  caseId          String
+  fromActorId     String
+  toActorId       String
+  relationType    String
+  description     String?
+  weight          Float           @default(1)
+  startDate       DateTime?
+  endDate         DateTime?
+  factStatus      FactStatus      @default(DOCUMENTED_FACT)
+  evidenceLevel   EvidenceLevel   @default(JOURNALISTIC)
+  relatedEventId  String?
+  status          EditorialStatus @default(PUBLISHED)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  createdById     String?
+  reviewedById    String?
+  reviewedAt      DateTime?
+
+  case          Case                   @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  fromActor     Actor                  @relation("RelFrom", fields: [fromActorId], references: [id], onDelete: Cascade)
+  toActor       Actor                  @relation("RelTo", fields: [toActorId], references: [id], onDelete: Cascade)
+  relatedEvent  Event?                 @relation(fields: [relatedEventId], references: [id])
+  sources       RelationshipSource[]
+}
+
+model Source {
+  id              String          @id @default(cuid())
+  caseId          String?
+  title           String
+  url             String?
+  outlet          String?
+  sourceType      String // journalistic | institutional | documentary
+  publishedAt     DateTime?
+  accessedAt      DateTime?
+  author          String?
+  excerpt         String?
+  evidenceLevel   EvidenceLevel   @default(JOURNALISTIC)
+  reliabilityNote String?
+  status          EditorialStatus @default(PUBLISHED)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  createdById     String?
+  reviewedById    String?
+  reviewedAt      DateTime?
+  mentionedActorId String?
+
+  case           Case?                 @relation(fields: [caseId], references: [id], onDelete: SetNull)
+  mentionedActor Actor?                @relation("SourceMentions", fields: [mentionedActorId], references: [id])
+  eventSources   EventSource[]
+  relSources     RelationshipSource[]
+  evidences      Evidence[]
+}
+
+model EventSource {
+  id       String @id @default(cuid())
+  eventId  String
+  sourceId String
+  event    Event  @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  source   Source @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, sourceId])
+}
+
+model RelationshipSource {
+  id             String       @id @default(cuid())
+  relationshipId String
+  sourceId       String
+  relationship   Relationship @relation(fields: [relationshipId], references: [id], onDelete: Cascade)
+  source         Source       @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+
+  @@unique([relationshipId, sourceId])
+}
+
+model Evidence {
+  id            String        @id @default(cuid())
+  sourceId      String
+  label         String
+  description   String?
+  evidenceLevel EvidenceLevel
+  createdAt     DateTime      @default(now())
+  source        Source        @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+}
+
+model Document {
+  id            String          @id @default(cuid())
+  caseId        String?
+  actorId       String?
+  eventId       String?
+  title         String
+  documentType  String
+  url           String?
+  summary       String?
+  evidenceLevel EvidenceLevel   @default(OFFICIAL_DOCUMENT)
+  publishedAt   DateTime?
+  status        EditorialStatus @default(PUBLISHED)
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  case  Case?  @relation(fields: [caseId], references: [id], onDelete: SetNull)
+  actor Actor? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  event Event? @relation(fields: [eventId], references: [id], onDelete: SetNull)
+}
+
+model Location {
+  id        String  @id @default(cuid())
+  caseId    String?
+  label     String
+  city      String?
+  state     String?
+  country   String  @default("Brasil")
+  latitude  Float?
+  longitude Float?
+
+  case   Case?   @relation(fields: [caseId], references: [id], onDelete: SetNull)
+  events Event[]
+}
+
+model ActorRelevanceScore {
+  id                String   @id @default(cuid())
+  actorId           String
+  caseId            String
+  score             Float
+  normalizedScore   Float
+  breakdownJson     String // JSON com componentes do cálculo
+  computedAt        DateTime @default(now())
+  actor             Actor    @relation(fields: [actorId], references: [id], onDelete: Cascade)
+
+  @@unique([actorId, caseId])
+  @@index([caseId])
+}
+
+model EditorialReview {
+  id           String   @id @default(cuid())
+  entityType   String
+  entityId     String
+  action       String // approve | reject | edit | correct
+  notes        String?
+  reviewerId   String?
+  createdAt    DateTime @default(now())
+  reviewer     User?    @relation(fields: [reviewerId], references: [id])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  entityType String
+  entityId   String
+  action     String
+  beforeJson String?
+  afterJson  String?
+  reason     String?
+  userId     String?
+  createdAt  DateTime @default(now())
+  user       User?    @relation(fields: [userId], references: [id])
+
+  @@index([entityType, entityId])
+}
