@@ -4,14 +4,14 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "prisma generate && prisma migrate deploy && tsx prisma/seed.ts && next build",
+    "build": "bash scripts/build.sh",
     "start": "next start",
     "lint": "eslint",
     "db:migrate": "prisma migrate dev",
     "db:seed": "tsx prisma/seed.ts",
     "db:reset": "prisma migrate reset --force",
     "postinstall": "prisma generate",
-    "vercel-build": "prisma generate && prisma migrate deploy && tsx prisma/seed.ts && next build"
+    "vercel-build": "bash scripts/build.sh"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

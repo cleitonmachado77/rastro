@@ -1,6 +1,9 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
-  "buildCommand": "prisma generate && prisma migrate deploy && tsx prisma/seed.ts && next build",
-  "installCommand": "npm install"
+  "buildCommand": "bash scripts/build.sh",
+  "installCommand": "npm install",
+  "env": {
+    "DATABASE_URL": "file:./dev.db"
+  }
 }
