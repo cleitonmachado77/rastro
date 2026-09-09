@@ -46,6 +46,8 @@ export const RELATION_TYPE_LABELS: Record<string, string> = {
   fiscalizacao: "Fiscalização",
   decisao: "Decisão",
   representacao_juridica: "Representação jurídica",
+  reuniao: "Reunião",
+  relacao_institucional: "Relação institucional",
   cargo: "Cargo",
   nomeacao: "Nomeação",
   parentesco: "Parentesco",
