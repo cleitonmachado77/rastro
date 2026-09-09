@@ -28,8 +28,7 @@ Caso de teste: **Caso Banco Aurora** em `/casos/banco-aurora`.
 
 1. Framework Preset: **Next.js** (não “Other”).
 2. Em Project Settings → Build & Development, deixe **Output Directory vazio** (não use `public`).
-3. Defina a variável de ambiente:
-   - `DATABASE_URL` = `file:./dev.db`
+3. (Opcional) Env `DATABASE_URL` — o projeto já usa `file:./dev.db` por padrão no build e em `vercel.json`.
 
 O `vercel.json` já força `framework: "nextjs"`. O build aplica migrations e seed do Caso Banco Aurora.
 

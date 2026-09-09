@@ -1,5 +1,10 @@
 import { PrismaClient } from "@prisma/client";
 
+// Fallback for Vercel/local when DATABASE_URL was not injected.
+if (!process.env.DATABASE_URL) {
+  process.env.DATABASE_URL = "file:./dev.db";
+}
+
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
 
 export const prisma =
