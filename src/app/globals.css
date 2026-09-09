@@ -169,7 +169,10 @@ a {
 }
 
 .react-flow__attribution {
-  display: none !important;
+  background: transparent !important;
+  color: var(--fg-faint) !important;
+  font-size: 9px !important;
+  opacity: 0.55;
 }
 
 .react-flow__controls {

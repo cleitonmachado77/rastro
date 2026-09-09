@@ -148,6 +148,9 @@ function dashForStatus(status: string) {
 }
 
 export function CaseExplorer({ caseMeta, actors, events, relationships }: Props) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
   const years = useMemo(() => {
     const times = events.map((e) => new Date(e.startDate).getTime());
     const min = Math.min(...times);
@@ -217,16 +220,17 @@ export function CaseExplorer({ caseMeta, actors, events, relationships }: Props)
       })
       .map((a) => {
         const color = ACTOR_TYPE_COLORS[a.primaryType] ?? ACTOR_TYPE_COLORS.default;
-        const r = nodeRadiusFromScore(a.normalizedScore);
+        const r = Math.round(nodeRadiusFromScore(a.normalizedScore));
+        const pos = positions[a.id] ?? { x: 0, y: 0 };
         return {
           id: a.id,
           type: "actor",
-          position: positions[a.id] ?? { x: 0, y: 0 },
+          position: { x: Math.round(pos.x), y: Math.round(pos.y) },
           data: {
             label: a.shortName || a.name,
             kind: a.actorKind,
             primaryType: a.primaryType,
-            score: a.normalizedScore,
+            score: Math.round(a.normalizedScore),
             color,
             radius: r,
             selected: selectedActorId === a.id,
@@ -362,36 +366,41 @@ export function CaseExplorer({ caseMeta, actors, events, relationships }: Props)
             factStatusLabels={FACT_STATUS_LABELS}
           />
           <div className="flex-1 min-h-0">
-            <ReactFlow
-              nodes={nodes}
-              edges={edges}
-              onNodesChange={onNodesChange}
-              onEdgesChange={onEdgesChange}
-              onNodeClick={onNodeClick}
-              onEdgeClick={onEdgeClick}
-              onPaneClick={onPaneClick}
-              nodeTypes={nodeTypes}
-              fitView
-              fitViewOptions={{ padding: 0.2 }}
-              minZoom={0.3}
-              maxZoom={2}
-              proOptions={{ hideAttribution: true }}
-              colorMode="dark"
-            >
-              <Background
-                variant={BackgroundVariant.Dots}
-                gap={22}
-                size={1}
-                color="#2a323a"
-              />
-              <Controls showInteractive={false} />
-              <MiniMap
-                nodeColor={(n) =>
-                  (n.data as ActorNodeData)?.color ?? "#6b7682"
-                }
-                maskColor="rgba(14,17,20,0.7)"
-              />
-            </ReactFlow>
+            {mounted ? (
+              <ReactFlow
+                nodes={nodes}
+                edges={edges}
+                onNodesChange={onNodesChange}
+                onEdgesChange={onEdgesChange}
+                onNodeClick={onNodeClick}
+                onEdgeClick={onEdgeClick}
+                onPaneClick={onPaneClick}
+                nodeTypes={nodeTypes}
+                fitView
+                fitViewOptions={{ padding: 0.2 }}
+                minZoom={0.3}
+                maxZoom={2}
+                colorMode="dark"
+              >
+                <Background
+                  variant={BackgroundVariant.Dots}
+                  gap={22}
+                  size={1}
+                  color="#2a323a"
+                />
+                <Controls showInteractive={false} />
+                <MiniMap
+                  nodeColor={(n) =>
+                    (n.data as ActorNodeData)?.color ?? "#6b7682"
+                  }
+                  maskColor="rgba(14,17,20,0.7)"
+                />
+              </ReactFlow>
+            ) : (
+              <div className="h-full flex items-center justify-center text-[var(--fg-faint)] mono text-xs">
+                Carregando mapa…
+              </div>
+            )}
           </div>
           <CaseTimeline
             events={events}
